@@ -5,7 +5,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,7 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.* // Importa todos los iconos básicos
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.fabentry.ui.theme.FabEntryTheme
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.ValueEventListener
@@ -44,10 +45,56 @@ import java.util.*
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val auth = FirebaseAuth.getInstance()
+
         setContent {
             FabEntryTheme {
-                MainNavigation()
+                // Estado de conexión segura
+                var isConnected by remember { mutableStateOf(false) }
+
+                // Efecto: Intentar Login Anónimo al abrir la app
+                LaunchedEffect(Unit) {
+                    if (auth.currentUser == null) {
+                        auth.signInAnonymously().addOnCompleteListener { task ->
+                            if (task.isSuccessful) {
+                                isConnected = true // Conexión Exitosa
+                            } else {
+                                Toast.makeText(applicationContext, "Error de seguridad: Sin conexión", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    } else {
+                        isConnected = true // Ya estaba conectado
+                    }
+                }
+
+                if (isConnected) {
+                    MainNavigation() // App Normal
+                } else {
+                    LoadingScreen() // Pantalla de Carga
+                }
             }
+        }
+    }
+}
+
+// --- PANTALLA DE CARGA (Mientra autentica) ---
+@Composable
+fun LoadingScreen() {
+    val infiniteTransition = rememberInfiniteTransition(label = "loading")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "alpha"
+    )
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xFF0F0F0F)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFFFF1744).copy(alpha = alpha), modifier = Modifier.size(64.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("ESTABLECIENDO CONEXIÓN SEGURA...", color = Color.Gray, fontSize = 10.sp, letterSpacing = 2.sp)
         }
     }
 }
@@ -94,7 +141,6 @@ fun SecurityAccessScreen(onAdminLoginSuccess: (String) -> Unit) {
     val haptic = LocalHapticFeedback.current
     val database = Firebase.database
 
-    // Animación de color Rojo -> Verde
     val mainColor by animateColorAsState(
         targetValue = if (accessGranted) Color(0xFF00E676) else MaterialTheme.colorScheme.primary,
         animationSpec = tween(500), label = "color"
@@ -102,7 +148,7 @@ fun SecurityAccessScreen(onAdminLoginSuccess: (String) -> Unit) {
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
 
-        // Botón Oculto Admin (Escudo)
+        // Botón Admin Oculto
         IconButton(
             onClick = { showAdminDialog = true },
             modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
@@ -125,10 +171,9 @@ fun SecurityAccessScreen(onAdminLoginSuccess: (String) -> Unit) {
 
             Spacer(modifier = Modifier.height(40.dp))
 
-            // Formulario
             AccessTextField(inputNombre, { inputNombre = it }, "Nombre Completo", Icons.Default.Person, mainColor)
             Spacer(modifier = Modifier.height(16.dp))
-            AccessTextField(inputRut, { inputRut = it }, "RUT (Sin puntos)", Icons.Default.Badge, mainColor) // Requiere Material Extended o usar AccountBox
+            AccessTextField(inputRut, { inputRut = it }, "RUT (Sin puntos)", Icons.Default.Badge, mainColor)
             Spacer(modifier = Modifier.height(16.dp))
             AccessTextField(inputPin, { inputPin = it }, "PIN", Icons.Default.Pin, mainColor, isPassword = true, keyboardType = KeyboardType.NumberPassword)
 
@@ -136,7 +181,6 @@ fun SecurityAccessScreen(onAdminLoginSuccess: (String) -> Unit) {
 
             Button(
                 onClick = {
-                    // LIMPIEZA DE DATOS
                     val rutClean = inputRut.replace(".", "").trim()
                     val pinClean = inputPin.trim()
                     val nombreClean = inputNombre.trim()
@@ -154,9 +198,8 @@ fun SecurityAccessScreen(onAdminLoginSuccess: (String) -> Unit) {
                                 val dbNombre = snapshot.child("nombre").value.toString()
 
                                 if (dbPin == pinClean && dbNombre.equals(nombreClean, ignoreCase = true)) {
-                                    // ÉXITO
                                     accessGranted = true
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress) // Vibración
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     database.getReference("estado_puerta").setValue("ABIERTO")
 
                                     val log = IngresoLog(dbNombre, rutClean, SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date()))
@@ -168,7 +211,7 @@ fun SecurityAccessScreen(onAdminLoginSuccess: (String) -> Unit) {
                                         inputPin = ""; inputRut = ""; inputNombre = ""
                                     }, 3000)
                                 } else {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) // Vibración Error
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     Toast.makeText(context, "Credenciales Incorrectas", Toast.LENGTH_SHORT).show()
                                 }
                             } else {
@@ -190,7 +233,6 @@ fun SecurityAccessScreen(onAdminLoginSuccess: (String) -> Unit) {
         }
     }
 
-    // Login Admin Popup
     if (showAdminDialog) {
         AdminLoginDialog(
             onDismiss = { showAdminDialog = false },
@@ -238,7 +280,6 @@ fun TeacherDashboard(docenteName: String, onLogout: () -> Unit) {
             }
         }
 
-        // Tabs
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
             tabs.forEachIndexed { index, title ->
                 val isSelected = selectedTab == index
@@ -262,8 +303,7 @@ fun TeacherDashboard(docenteName: String, onLogout: () -> Unit) {
     }
 }
 
-// --- VISTAS DEL DASHBOARD ---
-
+// --- VISTAS DASHBOARD ---
 @Composable
 fun HistoryView() {
     val fullLogs = remember { mutableStateListOf<IngresoLog>() }
@@ -408,7 +448,7 @@ fun AddUserView() {
     }
 }
 
-// --- UTILS ---
+// --- UTILS UI ---
 @Composable
 fun AccessTextField(value: String, onValueChange: (String) -> Unit, label: String, icon: ImageVector, activeColor: Color, isPassword: Boolean = false, keyboardType: KeyboardType = KeyboardType.Text) {
     OutlinedTextField(
